@@ -99,18 +99,18 @@ class StageWorld():
         rospy.sleep(1.)
         
 
-    def set_rviz_pose():
+    def set_rviz_pose(self, x, y, w):
     
         rate = rospy.Rate(1) # 10hz
 
         pose = PoseWithCovarianceStamped()
         pose.header.frame_id = "map"
-        pose.pose.pose.position.x=-2
-        pose.pose.pose.position.y=-1
+        pose.pose.pose.position.x= x
+        pose.pose.pose.position.y= y
         pose.pose.pose.position.z=0
         pose.pose.covariance=[0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.06853891945200942]
-        pose.pose.pose.orientation.z=0.0267568523876
-        pose.pose.pose.orientation.w=0.999641971333
+        pose.pose.pose.orientation.z=0
+        pose.pose.pose.orientation.w=w
         
         self.pub_amcl_init.publish(pose)
         rate.sleep()
@@ -121,19 +121,17 @@ class StageWorld():
 
         #rospy.spin()
 
-    def set_gazebo_pose():
-
-        self.is_sub_goal = False
+    def set_gazebo_pose(self, x, y, w):
         
         state_msg = ModelState()
         state_msg.model_name = 'servingbot_sim'
-        state_msg.pose.position.x = -2
-        state_msg.pose.position.y = -1
+        state_msg.pose.position.x = x
+        state_msg.pose.position.y = y
         state_msg.pose.position.z = 0
         state_msg.pose.orientation.x = 0
         state_msg.pose.orientation.y = 0
         state_msg.pose.orientation.z = 0
-        state_msg.pose.orientation.w = 0
+        state_msg.pose.orientation.w = w
 
         rospy.wait_for_service('/gazebo/set_model_state')
         try:
@@ -142,7 +140,7 @@ class StageWorld():
         except rospy.ServiceException, e:
             print "Service call failed: %s" % e
 
-    def reset_gazebo_simulation():
+    def reset_gazebo_simulation(self):
         self.reset_gazebo()
 
     def goal_callback(self, Goal):
@@ -260,20 +258,27 @@ class StageWorld():
         reward_g = (self.pre_distance - self.distance) * 2.5
         reward_c = 0
         reward_w = 0
+        reward_ct = 0
         result = 0
 
         is_crash = self.get_crash_state()
-        self.collision_laser_flag()
+        scan_min = self.collision_laser_flag(self.robot_radius)
 
         if self.distance < self.goal_size:
             terminate = True
             reward_g = 15
             result = 'Reach Goal'
+            self.is_sub_goal = False
 
         if self.is_collision == 1:
             terminate = True
             reward_c = -15.
             result = 'Crashed'
+            self.is_sub_goal = False
+ 
+
+        if scan_min > self.robot_radius and scan_min < (self.lidar_danger+self.robot_radius):
+            reward_ct = -0.05*(1/(scan_min-self.robot_radius)
 
         if np.abs(w) >  1:
             reward_w = -0.1 * np.abs(w)
@@ -281,8 +286,11 @@ class StageWorld():
         if t > 10000:
             terminate = True
             result = 'Time out'
+            self.is_sub_goal = False
 
-        reward = reward_g + reward_c + reward_w
+
+
+        reward = reward_g + reward_c + reward_w + reward_ct
 
         return reward, terminate, result
 
@@ -329,17 +337,19 @@ class StageWorld():
         self.cmd_pose.publish(pose_cmd)
 
 
-    def collision_laser_flag(self, d_bound):
+    def collision_laser_flag(self, r):
         scan = copy.deepcopy(self.scan)
         scan[np.isnan(scan)] = 6.0
         scan[np.isinf(scan)] = 6.0
 
         scan_min = np.min(scan)
 
-        if scan_min < d_bound:
+        if scan_min <= r:
             self.is_collision = 1
         else:
             self.is_collision = 0
+
+        return scan_min
 
     def generate_random_pose(self):
         [x_robot, y_robot, theta] = self.get_self_stateGT()

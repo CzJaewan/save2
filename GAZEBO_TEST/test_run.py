@@ -31,6 +31,7 @@ OBS_SIZE = 512
 ACT_SIZE = 2
 LEARNING_RATE = 5e-5
 
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 def enjoy(comm, env, policy, action_bound):
 
@@ -40,11 +41,12 @@ def enjoy(comm, env, policy, action_bound):
 
     for id in range(MAX_EPISODES):
 
-        env.set_gazebo_pose()
-
+        env.set_gazebo_pose(-2,-1, 0)
+        env.set_rviz_pose(-2, -1, 0)
+        
         while :
 
-            get_goal = env.generate_test_goal_point()
+            get_goal = env.is_sub_goal
 
             if get_goal:
                 break
@@ -73,6 +75,7 @@ def enjoy(comm, env, policy, action_bound):
             real_action = comm.scatter(scaled_action, root=0)
             if terminal == True:
                 real_action[0] = 0
+                
             env.control_vel(real_action)
             # rate.sleep()
             rospy.sleep(0.001)
@@ -143,7 +146,7 @@ if __name__ == '__main__':
         policy_path = 'policy_test'
         # policy = MLPPolicy(obs_size, act_size)
         policy = CNNPolicy(frames=LASER_HIST, action_space=2)
-        policy.cuda()
+        policy.to(device)
         opt = Adam(policy.parameters(), lr=LEARNING_RATE)
         mse = nn.MSELoss()
 
