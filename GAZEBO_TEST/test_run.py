@@ -15,7 +15,6 @@ from model.net import MLPPolicy, CNNPolicy
 from test_world import StageWorld
 from model.ppo import generate_action_no_sampling, transform_buffer
 
-
 MAX_EPISODES = 10
 LASER_BEAM = 512
 LASER_HIST = 3
@@ -26,7 +25,7 @@ BATCH_SIZE = 512
 EPOCH = 3
 COEFF_ENTROPY = 5e-4
 CLIP_VALUE = 0.1
-NUM_ENV = 50
+NUM_ENV = 1
 OBS_SIZE = 512
 ACT_SIZE = 2
 LEARNING_RATE = 5e-5
@@ -41,10 +40,10 @@ def enjoy(comm, env, policy, action_bound):
 
     for id in range(MAX_EPISODES):
 
-        env.set_gazebo_pose(-2,-1, 0)
-        env.set_rviz_pose(-2, -1, 0)
+        env.set_gazebo_pose(0,0, 0)
+        #env.set_rviz_pose(0, 0, 0)
         
-        while :
+        while True:
 
             get_goal = env.is_sub_goal
 
@@ -70,7 +69,6 @@ def enjoy(comm, env, policy, action_bound):
             mean, scaled_action =generate_action_no_sampling(env=env, state_list=state_list,
                                                     policy=policy, action_bound=action_bound)
 
-
             # execute actions
             real_action = comm.scatter(scaled_action, root=0)
             if terminal == True:
@@ -95,9 +93,12 @@ def enjoy(comm, env, policy, action_bound):
             speed_next = np.asarray(env.get_self_speed())
             state_next = [obs_stack, goal_next, speed_next]
 
-
             state = state_next
 
+            print(step)
+
+        env.control_vel([0,0])
+        env.is_sub_goal = False
 
         logger.info('Goal (%05.1f, %05.1f), Episode %05d, setp %03d, Action [%1.3f, %1.3f], %s' % \
                         (env.goal_point[0], env.goal_point[1], id + 1, step, ep_v/step, ep_w/step, result))
@@ -139,6 +140,7 @@ if __name__ == '__main__':
     size = comm.Get_size()
 
     env = StageWorld(OBS_SIZE, index=rank, num_env=NUM_ENV)
+    print("env")
     reward = None
     action_bound = [[0, -1], [1, 1]]
 
@@ -153,7 +155,7 @@ if __name__ == '__main__':
         if not os.path.exists(policy_path):
             os.makedirs(policy_path)
 
-        file = policy_path + '/rc2_30000.pth'
+        file = policy_path + '/origin_30000.pth'
         if os.path.exists(file):
             logger.info('####################################')
             logger.info('############Loading Model###########')

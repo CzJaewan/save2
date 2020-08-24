@@ -13,10 +13,10 @@ from rosgraph_msgs.msg import Clock
 from std_srvs.srv import Empty
 from std_msgs.msg import Int8
 from model.utils import test_init_pose, test_goal_point
-from geometry_msgs.msg import PoseWithCovarianceStamped
+from geometry_msgs.msg import PoseWithCovarianceStamped, PoseStamped
 from gazebo_msgs.msg import ModelState 
 from gazebo_msgs.srv import SetModelState
-from respawnGoal import Respawn
+from model.respawnGoal import Respawn
 
 
 class StageWorld():
@@ -45,23 +45,25 @@ class StageWorld():
         # lidar
         self.lidar_danger = 0.2
 
+        cmd_pose_topic = 'robot_' + str(index) + '/cmd_pose'
+        self.cmd_pose = rospy.Publisher(cmd_pose_topic, Pose, queue_size=10)
+
         # -----------Publisher and Subscriber-------------
         #cmd_vel_topic = 'robot_' + str(index) + '/cmd_vel'
         cmd_vel_topic = '/cmd_vel'
         self.cmd_vel = rospy.Publisher(cmd_vel_topic, Twist, queue_size=10)
 
-        cmd_pose_topic = 'robot_' + str(index) + '/cmd_pose'
-        self.cmd_pose = rospy.Publisher(cmd_pose_topic, Pose, queue_size=10)
-
         #object_state_topic = 'robot_' + str(index) + '/base_pose_ground_truth'
-        object_state_topic = '/amcl_pose'
+        
+        #object_state_topic = '/amcl_pose'
+        object_state_topic = '/odom'
         self.object_state_sub = rospy.Subscriber(object_state_topic, Odometry, self.ground_truth_callback)
 
         #laser_topic = 'robot_' + str(index) + '/base_scan'
         laser_topic = '/scan'
         self.laser_sub = rospy.Subscriber(laser_topic, LaserScan, self.laser_scan_callback)
 
-        odom_topic = 'robot_' + str(index) + '/odom'
+        odom_topic = '/odom'
         self.odom_sub = rospy.Subscriber(odom_topic, Odometry, self.odometry_callback)
 
         crash_topic = 'robot_' + str(index) + '/is_crashed'
@@ -70,8 +72,8 @@ class StageWorld():
         self.sim_clock = rospy.Subscriber('clock', Clock, self.sim_clock_callback)
         
         # -----------Gazebo data----------------------------
-        goal_topic = 'move_base_simple/gaol'
-        self.goal_sub = rospy.Subscriber(goal_topic, Goal, self.goal_callback)
+        goal_topic = 'move_base_simple/goal'
+        self.goal_sub = rospy.Subscriber(goal_topic, PoseStamped, self.goal_callback)
         
         self.set_state = rospy.ServiceProxy('/gazebo/set_model_state', SetModelState)
         # -----------rviz----------------------
@@ -92,8 +94,15 @@ class StageWorld():
         self.is_crashed = None
         self.is_collision = 0
 
+        self.goal_point = [0, 0]
+        self.pre_distance = 0
+        self.distance = 0
+        self.robot_radius = 0.4
+
+        self.goal_model = Respawn(goal_point[0], goal_point[1])
+
         while self.scan is None or self.speed is None or self.state is None\
-                or self.speed_GT is None or self.state_GT is None or self.is_crashed is None:
+                or self.speed_GT is None or self.state_GT is None:
             pass
 
         rospy.sleep(1.)
@@ -124,7 +133,7 @@ class StageWorld():
     def set_gazebo_pose(self, x, y, w):
         
         state_msg = ModelState()
-        state_msg.model_name = 'servingbot_sim'
+        state_msg.model_name = 'servingbot'
         state_msg.pose.position.x = x
         state_msg.pose.position.y = y
         state_msg.pose.position.z = 0
@@ -144,15 +153,24 @@ class StageWorld():
         self.reset_gazebo()
 
     def goal_callback(self, Goal):
+        
+        print("goal")
 
         self.is_sub_goal = True
 
-        self.goal_point[0] = Goal.position.x
-        self.goal_point[1] = Goal.position.y
+        self.goal_point[0] = Goal.pose.position.x
+        self.goal_point[1] = Goal.pose.position.y
+        self.pre_distance = 0
+        self.distance = copy.deepcopy(self.pre_distance)
 
-        return 
+        self.goal_model.deleteModel()
+
+        self.goal_model.goal_position.position.x = Goal.pose.position.x
+        self.goal_model.goal_position.position.y = Goal.pose.position.y
+
+        self.goal_model.respawnModel()
     
-    def get_goal(self)
+    def get_goal(self):
         return self.is_sub_goal
 
     def ground_truth_callback(self, GT_odometry):
@@ -209,7 +227,6 @@ class StageWorld():
         scan_sparse = np.concatenate((sparse_scan_left, sparse_scan_right[::-1]), axis=0)
         return scan_sparse / 6.0 - 0.5
 
-
     def get_self_speed(self):
         return self.speed
 
@@ -231,12 +248,13 @@ class StageWorld():
 
     def reset_world(self):
         #self.reset_stage
-        self.reset_gazebo()
+        #self.reset_gazebo()
         self.self_speed = [0.0, 0.0]
         self.step_goal = [0., 0.]
         self.step_r_cnt = 0.
         self.start_time = time.time()
-        rospy.sleep(0.5)
+        
+        #rospy.sleep(1.)
 
     def generate_goal_point(self):
         self.goal_point = test_goal_point(self.index)
@@ -262,54 +280,32 @@ class StageWorld():
         result = 0
 
         is_crash = self.get_crash_state()
-        scan_min = self.collision_laser_flag(self.robot_radius)
+
+        is_collision = self.collision_laser_flag(self.robot_radius, self.ladar_danger)
 
         if self.distance < self.goal_size:
             terminate = True
             reward_g = 15
             result = 'Reach Goal'
-            self.is_sub_goal = False
 
         if self.is_collision == 1:
             terminate = True
             reward_c = -15.
             result = 'Crashed'
-            self.is_sub_goal = False
  
-
-        if scan_min > self.robot_radius and scan_min < (self.lidar_danger+self.robot_radius):
-            reward_ct = -0.05*(1/(scan_min-self.robot_radius)
-
-        if np.abs(w) >  1:
+        if np.abs(w) > 1:
             reward_w = -0.1 * np.abs(w)
 
         if t > 10000:
             terminate = True
             result = 'Time out'
-            self.is_sub_goal = False
 
-
+        if (scan_min > self.robot_radius) and (scan_min < (self.lidar_danger+self.robot_radius)):
+            reward_ct = -0.05*(1/(scan_min-self.robot_radius))
 
         reward = reward_g + reward_c + reward_w + reward_ct
 
         return reward, terminate, result
-
-    def reset_test_pose(self):
-
-        reset_pose = test_init_pose(self.index)
-        rospy.sleep(1.0)
-
-        self.control_pose(reset_pose)
-        rospy.sleep(1.0)
-
-    def reset_pose_test(self):
-
-        reset_pose = [0.00, 5.00, -np.pi]
-        rospy.sleep(1.0)
-
-        self.control_pose(reset_pose)
-        rospy.sleep(1.0)
-
 
     def control_vel(self, action):
         move_cmd = Twist()
@@ -320,22 +316,6 @@ class StageWorld():
         move_cmd.angular.y = 0.
         move_cmd.angular.z = action[1]
         self.cmd_vel.publish(move_cmd)
-
-
-    def control_pose(self, pose):
-        pose_cmd = Pose()
-        assert len(pose)==3
-        pose_cmd.position.x = pose[0]
-        pose_cmd.position.y = pose[1]
-        pose_cmd.position.z = 0
-
-        qtn = tf.transformations.quaternion_from_euler(0, 0, pose[2], 'rxyz')
-        pose_cmd.orientation.x = qtn[0]
-        pose_cmd.orientation.y = qtn[1]
-        pose_cmd.orientation.z = qtn[2]
-        pose_cmd.orientation.w = qtn[3]
-        self.cmd_pose.publish(pose_cmd)
-
 
     def collision_laser_flag(self, r):
         scan = copy.deepcopy(self.scan)
@@ -390,6 +370,17 @@ class StageWorld():
             dis_goal = np.sqrt((x - x_robot) ** 2 + (y - y_robot) ** 2)
         return [x, y]
 
+    def control_pose(self, pose):
+        pose_cmd = Pose()
+        assert len(pose)==3
+        pose_cmd.position.x = pose[0]
+        pose_cmd.position.y = pose[1]
+        pose_cmd.position.z = 0
 
-
+        qtn = tf.transformations.quaternion_from_euler(0, 0, pose[2], 'rxyz')
+        pose_cmd.orientation.x = qtn[0]
+        pose_cmd.orientation.y = qtn[1]
+        pose_cmd.orientation.z = qtn[2]
+        pose_cmd.orientation.w = qtn[3]
+        self.cmd_pose.publish(pose_cmd)
 

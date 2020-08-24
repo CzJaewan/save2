@@ -8,7 +8,7 @@ from gazebo_msgs.msg import ModelStates
 from geometry_msgs.msg import Pose
 
 class Respawn():
-    def __init__(self):
+    def __init__(self, init_goal_x, init_goal_y):
         self.modelPath = os.path.dirname(os.path.realpath(__file__))
         self.modelPath = self.modelPath.replace('turtlebot3_machine_learning/turtlebot3_dqn/src/turtlebot3_dqn',
                                                 'turtlebot3_simulations/turtlebot3_gazebo/models/turtlebot3_square/goal_box/model.sdf')
@@ -17,8 +17,8 @@ class Respawn():
         
         self.goal_position = Pose()
 
-        self.goal_position.position.x = self.init_goal_x
-        self.goal_position.position.y = self.init_goal_y
+        self.goal_position.position.x = init_goal_x
+        self.goal_position.position.y = init_goal_y
         self.modelName = 'goal'
 
         self.sub_model = rospy.Subscriber('gazebo/model_states', ModelStates, self.checkModel)
